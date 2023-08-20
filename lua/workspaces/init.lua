@@ -442,6 +442,33 @@ M.rename = function(name, new_name)
     end
 end
 
+---set path of an existing workspace
+---@param name string
+---@param new_path string
+M.set_path = function(name, new_path)
+    local workspace, i = find(name)
+    if not workspace or not i then
+        if not name then
+            return
+        end
+        notify.warn(string.format("Workspace '%s' does not exist", name))
+        return
+    end
+
+    workspace.path = new_path
+    local workspaces = load_workspaces()
+    workspaces[i] = workspace
+    store_workspaces(workspaces)
+
+    if current_workspace and current_workspace.name == name then
+        current_workspace = workspace
+    end
+
+    if config.notify_info then
+        notify.info(string.format("workspace [%s -> %s] path changed", workspace.name, workspace.path))
+    end
+end
+
 ---returns the list of all workspaces
 ---each workspace is formatted as a { name = "", path = "" } table
 ---@return table
