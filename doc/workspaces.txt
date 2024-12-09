@@ -57,6 +57,11 @@ configuration. >
         -- option to automatically activate workspace when opening neovim in a workspace directory
         auto_open = false,
 
+        -- option to automatically activate workspace when changing directory not via this plugin
+        -- set to "autochdir" to enable auto_dir when using :e and vim.opt.autochdir
+        -- valid options are false, true, and "autochdir"
+        auto_dir = false,
+
         -- enable info-level notifications after adding or removing a
         -- workspace. disable to only be notified for warnings or errors.
         notify_info = true,
@@ -212,6 +217,12 @@ workspaces.path(): {string}|{nil}
 workspaces.sync_dirs()
    Synchronize all workspaces that are subfolders of registered directories.
 
+workspaces.get_custom(name: {string}): {string}|{nil}
+   Returns custom string data associated with a workspace.
+
+workspaces.set_custom(name: {string}, data: {string})
+   Sets custom string data associated with a workspace.
+
 ==============================================================================
 TELESCOPE                                               *workspaces-telescope*
 
@@ -225,13 +236,17 @@ running any registered hooks. `<c-t>` will open the selected workspace in a new 
 
 To keep nvim in insert mode (for example, when
 chaining multiple telescope pickers), add the following to your telescope
-setup function. >
+setup function. You can also specify the highlight group used for the path in
+the picker. >
 
     require("telescope").setup({
       extensions = {
         workspaces = {
           -- keep insert mode after selection in the picker, default is false
           keep_insert = true,
+          -- highlight group used for the path in the picker, default is
+          "String"
+          path_hl = "String",
         }
       }
     })

@@ -27,6 +27,11 @@ local config = {
     -- option to automatically activate workspace when opening neovim in a workspace directory
     auto_open = false,
 
+    -- option to automatically activate workspace when changing directory not via this plugin
+    -- set to "autochdir" to enable auto_dir when using :e and vim.opt.autochdir
+    -- valid options are false, true, and "autochdir"
+    auto_dir = false,
+
     -- enable info-level notifications after adding or removing a workspace
     notify_info = true,
 
@@ -66,6 +71,7 @@ local load_workspaces = function()
             path = vim.fn.fnamemodify(data[2], ":p"),
             last_opened = data[3],
             type = data[4] or "",
+            custom = data[5] or nil,
         })
     end
 
@@ -98,7 +104,8 @@ local store_workspaces = function(workspaces)
         -- not all workspaces have a date
         local date_str = workspace.last_opened or ""
         local type = workspace.type or ""
-        data = data .. string.format("%s\0%s\0%s\0%s\n", workspace.name, workspace.path, date_str, type)
+        local custom = workspace.custom or ""
+        data = data .. string.format("%s\0%s\0%s\0%s\0%s\n", workspace.name, workspace.path, date_str, type, custom)
     end
     util.file.write(config.path, data)
 end
@@ -245,7 +252,6 @@ local add_workspace_or_directory = function(path, name, is_dir, from_dir_update)
         end
     else
         -- both given, ensure the path is expanded
-        name, path = path, name
         path = vim.fn.fnamemodify(path, ":p")
     end
 
@@ -289,7 +295,7 @@ end
 ---@param from_dir_update boolean|nil
 local remove_workspace_or_directory = function(name, is_dir, from_dir_update)
     local type_name = is_dir and "Directory" or "Workspace"
-    local path = cwd()
+    local path = (not name and cwd()) or nil
     local workspace, i = find(name, path, is_dir)
     if not workspace then
         if not name then
@@ -359,12 +365,11 @@ M.add_dir = function(path)
     for _, workspace_path in ipairs(directories) do
         local workspace_name = util.path.basename(workspace_path)
 
-        add_workspace_or_directory(workspace_name, workspace_path, false, true)
+        add_workspace_or_directory(workspace_path, workspace_name, false, true)
     end
 
     local dir_name = util.path.basename(normalized_path)
-
-    add_workspace_or_directory(dir_name, normalized_path, true, false)
+    add_workspace_or_directory(normalized_path, dir_name, true, false)
 end
 
 -- This function is a legacy of the older api, but it's not worth
@@ -374,11 +379,11 @@ end
 ---@param path string|nil
 M.add_swap = function(name, path)
     if name and path then
-        M.add(name, path)
+        add_workspace_or_directory(path, name)
     elseif name and not path then
-        M.add(name, path)
+        add_workspace_or_directory(name, path)
     else
-        M.add(path, name)
+        add_workspace_or_directory(path, name)
     end
 end
 
@@ -547,11 +552,12 @@ M.open = function(name)
     workspaces[index].last_opened = util.date()
     store_workspaces(workspaces)
 
+    current_workspace = workspace
+
     -- change directory
     local cd_command = get_cd_command()
     vim.cmd(string.format("%s %s", cd_command, workspace.path))
 
-    current_workspace = workspace
     run_hooks(config.hooks.open, workspace.name, workspace.path)
 end
 
@@ -627,20 +633,99 @@ M.sync_dirs = function()
     notify.info(string.format("Directory workspaces have been synced"))
 end
 
+---get custom string data associated with a workspace
+---@param name string
+---@return string
+M.get_custom = function(name)
+    local workspace = find(name)
+    if not workspace then
+        notify.warn(string.format("Workspace '%s' does not exist", name))
+        return
+    end
+
+    return workspace.custom
+end
+
+---set custom string data associated with a workspace
+---@param name string
+---@param data string
+M.set_custom = function(name, data)
+    local workspace, index = find(name)
+    if not workspace then
+        notify.warn(string.format("Workspace '%s' does not exist", name))
+        return
+    end
+
+    workspace.custom = data
+
+    local workspaces = load_workspaces()
+    workspaces[index] = workspace
+    store_workspaces(workspaces)
+end
+
 -- function that adds a neovim autocmd that activates
-local enable_autoload = function()
+local enable_autoload = function(group)
     -- create autocmd for every file at the start of neovim that checks the current working directory
     -- and if the cwd  matches a workspace directory then activate the corresponding workspace
       vim.api.nvim_create_autocmd({ "VimEnter" }, {
           pattern = "*",
+          nested = true,
+          group = group,
           callback = function()
               for _, workspace in pairs(get_workspaces_and_dirs().workspaces) do
+                  -- dont autoload if nvim start with arg
+                  if vim.fn.argc(-1) > 0 then
+                    return
+                  end
+
                   if workspace.path == cwd() then
                       M.open(workspace.name)
               end
             end
           end,
       })
+end
+
+-- create autocmd to enable / disable a workspace when changing dir not via this plugin
+local enable_autodir = function(group)
+    local cd_command = get_cd_command()
+    local pattern
+    if cd_command == "tcd" then
+        pattern = "tabpage"
+    elseif cd_command == "lcd" then
+        pattern = "window"
+    else
+        pattern = "global"
+    end
+
+    cb = function()
+        if cwd() == M.path() then
+            return
+        end
+
+        for _, workspace in pairs(get_workspaces_and_dirs().workspaces) do
+            if workspace.path == cwd() then
+                M.open(workspace.name)
+                return
+            end
+        end
+
+        current_workspace = nil
+    end
+
+    vim.api.nvim_create_autocmd("DirChanged", {
+        pattern = pattern,
+        group = group,
+        callback = cb,
+    })
+
+    if config.auto_dir == "autochdir" then
+        vim.api.nvim_create_autocmd("DirChanged", {
+            pattern = "auto",
+            group = group,
+            callback = cb,
+        })
+    end
 end
 
 -- run to setup user commands and custom config
@@ -722,8 +807,14 @@ M.setup = function(opts)
         desc = "Synchronize workspaces from registered directories.",
     })
 
+    local group = vim.api.nvim_create_augroup("workspaces.nvim", { clear = true })
+
     if config.auto_open then
-        enable_autoload()
+        enable_autoload(group)
+    end
+
+    if config.auto_dir then
+        enable_autodir(group)
     end
 end
 

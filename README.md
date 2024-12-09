@@ -23,6 +23,18 @@ Note that this plugin is small in scope and complexity. It has been stable for a
 long time. Just because I am not making changes doesn't mean it's been
 abandoned! It was designed to be small and stable, and it will stay that way.
 
+## Semantics
+
+Because naming could be confusing, here are some definitions:
+
+* **Workspaces**: as described above, are project directories.
+The purpose of this plugin being to switch easily between these project directories.
+
+* **Dirs**: These are directories that contain workspaces. It allows to easily sync multiple workspaces contained in a directory.
+For example, you might have a directory called `projects` on your machine, that contains all your projects.
+Just register this directory as a `dir` with `:WorkspacesAddDir` and all the workspaces contained in
+it will be automatically added to the list of workspaces when running `:WorkspacesSyncDirs`.
+
 ## Installation
 
 Install with your favorite neovim package manager. Be sure to run the setup
@@ -61,6 +73,11 @@ The setup function accepts a table to modify the default configuration:
 
     -- option to automatically activate workspace when opening neovim in a workspace directory
     auto_open = false,
+
+    -- option to automatically activate workspace when changing directory not via this plugin
+    -- set to "autochdir" to enable auto_dir when using :e and vim.opt.autochdir
+    -- valid options are false, true, and "autochdir"
+    auto_dir = false,
 
     -- enable info-level notifications after adding or removing a workspace
     notify_info = true,
@@ -166,6 +183,10 @@ workspaces.path(): string|nil
 
 workspaces.sync_dirs()
 
+workspaces.get_custom(name: string): string|nil
+
+workspaces.set_custom(name: string, data: string)
+
 ```
 
 See `:h workspaces-api` for more information on the API functions.
@@ -185,7 +206,8 @@ running any registered hooks. `<c-t>` will open the selected workspace in a new 
 
 To keep nvim in insert mode (for example, when
 chaining multiple telescope pickers), add the following to your telescope setup
-function.
+function. You can also specify the highlight group used for the path in
+the picker.
 
 ```lua
 require("telescope").setup({
@@ -193,6 +215,8 @@ require("telescope").setup({
     workspaces = {
       -- keep insert mode after selection in the picker, default is false
       keep_insert = true,
+      -- Highlight group used for the path in the picker, default is "String"
+      path_hl = "String"
     }
   }
 })
@@ -243,6 +267,13 @@ Load any saved sessions using
 ```lua
 require("workspaces").setup({
     hooks = {
+        open_pre = {
+          -- If recording, save current session state and stop recording
+          "SessionsStop",
+
+          -- delete all buffers (does not save changes)
+          "silent %bdelete!",
+        },
         open = function()
           require("sessions").load(nil, { silent = true })
         end,
